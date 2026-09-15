@@ -70,6 +70,8 @@ RPI_CMD_GET_CURRENT_DIRECT_LEDS = 0x0B
 RPI_CMD_GET_SAVED_DIRECT_LEDS = 0x0C
 RPI_CMD_SAVE_DIRECT_LEDS = 0x0D
 RPI_CMD_LOAD_DIRECT_LEDS = 0x0E
+RPI_CMD_SET_SUSPEND_DURATION = 0x0F
+RPI_CMD_GET_SUSPEND_DURATION = 0x10
 
 REPORT_LENGTH = 32
 
@@ -124,10 +126,12 @@ class Preset:
         self, *, effect, flags=LED_FLAG_ALL, speed=255,
         fixed_hue=False, 
         startup_animation=animation_option["START_ANIM_B_FADE_VAL"], 
-        hue=255, sat=255
+        hue=255, sat=255,
+        suspend_animation=False
     ):
         """Initialise preset with mode index, flags, effect, speed, 
-        fixed hue, startup animation, hue, and saturation."""
+        fixed hue, startup animation, hue, saturation,
+        and suspend animation."""
         self.flags = flags
         self.effect = effect
         self.speed = speed
@@ -135,6 +139,7 @@ class Preset:
         self.startup_animation = startup_animation
         self.hue = hue
         self.sat = sat
+        self.suspend_animation = suspend_animation
     
     def __repr__(self) -> str:
         """Return string representation of Preset.
@@ -150,7 +155,8 @@ class Preset:
         return (f"Preset(effect: {self.effect}, speed: {self.speed},"
                 f"fixed_hue: {'True' if self.fixed_hue else 'False'},"
                 f"startup_animation: {animation_name}"
-                f"hue: {self.hue}, sat: {self.sat})")
+                f"hue: {self.hue}, sat: {self.sat}"
+                f"suspend_animation: {self.suspend_animation})")
 
 
 def get_pi_country_code() -> str:
@@ -242,7 +248,7 @@ class RPiKeyboardConfig():
                 raise KeyboardNotCompatibleError(
                     "The keyboard does not support firmware version 1.2.0 or later")
         elif self.model == "PI500PLUS":
-            if rpi_version < (1, 2, 0):
+            if rpi_version < (1, 3, 0):
                 raise KeyboardNotCompatibleError(
                     "The keyboard does not support firmware version 1.2.0 or later")
 
@@ -857,8 +863,8 @@ class RPiKeyboardConfig():
             Preset object containing effect configuration
         """
         raw_data = self._send_check_command(CMD_RPI_COMMAND, RPI_CMD_GET_MODE, data=preset_index.to_bytes(1, byteorder="little"))
-        preset_index, flags, effect, speed, fixed_hue, startup_animation, hue, sat = struct.unpack("<BBHBBBBB", raw_data[2:11])
-        preset = Preset(flags=flags, effect=effect, speed=speed, fixed_hue=fixed_hue, startup_animation=startup_animation, hue=hue, sat=sat)
+        preset_index, flags, effect, speed, fixed_hue, startup_animation, hue, sat, suspend_animation = struct.unpack("<BBHBBBBBB", raw_data[2:12])
+        preset = Preset(flags=flags, effect=effect, speed=speed, fixed_hue=fixed_hue, startup_animation=startup_animation, hue=hue, sat=sat, suspend_animation=bool(suspend_animation))
         return preset
     
     def set_preset(self, preset_index: int, preset: Preset) -> None:
@@ -869,7 +875,7 @@ class RPiKeyboardConfig():
             preset: Preset object with effect configuration
         """
         self._send_check_command(CMD_RPI_COMMAND, RPI_CMD_SET_MODE,
-            data=struct.pack("<BBHBBBBB", 
+            data=struct.pack("<BBHBBBBBB", 
                             preset_index,
                             preset.flags,
                             preset.effect,
@@ -877,8 +883,34 @@ class RPiKeyboardConfig():
                             preset.fixed_hue,
                             preset.startup_animation,
                             preset.hue,
-                            preset.sat))
+                            preset.sat,
+                            preset.suspend_animation))
         return
+
+    def get_suspend_duration(self) -> int:
+        """Get the currently set suspend duration.
+        This returns the original duration, not how long left.
+
+        Returns:
+            Duration in seconds or 0 if unset
+        """
+        raw_data = self._send_check_command(CMD_RPI_COMMAND, RPI_CMD_GET_SUSPEND_DURATION)
+        duration = struct.unpack("<H", raw_data[2:4])[0]
+        return duration
+
+    def set_suspend_duration(self, duration: int) -> None:
+        """Set how long the host will be suspended for.
+        This is used for the progress bar
+        Set this at the same time as the rtc. It starts
+        incrementing immediately
+
+        Args:
+            duration: Duration in seconds
+        """
+        if not 0 <= duration <= 0xFFFF:
+            raise ValueError(f"Suspend duration must be in the range [0-65535]. got {duration}")
+        cmd_data = struct.pack("<H", duration)
+        self._send_check_command(CMD_RPI_COMMAND, RPI_CMD_SET_SUSPEND_DURATION, data=cmd_data)
 
     def set_led_direct_effect(self) -> None:
         """Enable direct LED control mode.

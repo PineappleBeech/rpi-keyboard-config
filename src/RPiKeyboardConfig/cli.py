@@ -132,7 +132,8 @@ def parse_preset_data(
     speed_str: str, 
     hue_str: Optional[str], 
     sat_str: str, 
-    startup_animation_str: str
+    startup_animation_str: str,
+    suspend_animation: bool
 ) -> 'Preset':
     """Parse and validate preset data to create a Preset object.
     
@@ -206,7 +207,8 @@ def parse_preset_data(
         startup_animation = Preset.animation_option[startup_animation_str]
     
     return Preset(effect=effect_id, speed=speed, hue=hue, sat=sat,
-                  startup_animation=startup_animation, fixed_hue=fixed_hue)
+                  startup_animation=startup_animation, fixed_hue=fixed_hue,
+                  suspend_animation=suspend_animation)
 
 def pretty_print_effect(preset: 'Preset') -> None:
     """Print only the effect components of a preset. 
@@ -252,6 +254,7 @@ def pretty_print_preset(preset: 'Preset') -> None:
                 print(f"  Hue not fixed")
         
         print(f"  Startup Animation: {animation_name}")
+        print(f"  Suspend Animations Enabled: {preset.suspend_animation}")
         # print(f"  Flags: {'All' if preset.flags == Preset.LED_FLAG_ALL "
         #       f"else 'None' if preset.flags == Preset.LED_FLAG_NONE "
         #       f"else preset.flags}")
@@ -575,13 +578,24 @@ def main() -> None:
         help='Startup animation. Default: START_ANIM_B_FADE_VAL. '
              'Options: ' + ', '.join(Preset.animation_option.keys())
     )
-    
+    preset_set_parser.add_argument(
+        '--suspend-animation', action='store_true',
+        help='Enable suspend and idle animations. Default: False'
+    )
+
 
     #########################################################
     # Commands for Demos
     #########################################################
     subparsers.add_parser('game', help='Run a game')
     subparsers.add_parser('random-leds', help='Randomly test LEDs')
+
+    suspend_parser = subparsers.add_parser('suspend', help='Get or set the expected suspend duration. \
+            Run this just before suspending for a progress bar.')
+    suspend_parser.add_argument(
+        'duration', nargs='?', type=int,
+        help='Seconds (0-65535). If not provided, shows current duration.'
+    )
 
 
     #########################################################
@@ -951,22 +965,33 @@ def main() -> None:
                         print(f"Preset at index {preset_index}:")
                         pretty_print_preset(preset_effect)
                         print()
+                    preset_effect = keyboard.get_preset(8)
+                    print(f"Suspended preset:")
+                    pretty_print_preset(preset_effect)
+                    print()
+
                     preset_effect = keyboard.get_preset(7)
                     print(f"The temporary effect was last set to:")
                     pretty_print_preset(preset_effect)
                     print()
                 else:
-                    preset_index = int(args.index)
-                    if preset_index > 7:
-                        raise ValueError(f"Preset index must be between 0 and 7")
+                    if args.index == "suspended":
+                        preset_index = 8
+                    else:
+                        preset_index = int(args.index)
+                        if preset_index > 7:
+                            raise ValueError(f"Preset index must be between 0 and 7 or 'suspended'")
                     preset = keyboard.get_preset(preset_index)
                     print(f"Preset at index {preset_index}:")
                     pretty_print_preset(preset)
 
             elif args.preset_command == 'set':
-                preset_index = int(args.index)
-                if preset_index > 6:
-                    raise ValueError(f"Preset index must be between 0 and 6")
+                if args.index == "suspended":
+                    preset_index = 8
+                else:
+                    preset_index = int(args.index)
+                    if preset_index > 6:
+                        raise ValueError(f"Preset index must be between 0 and 6 or 'suspended'")
                 
                 if args.effect is None:
                     preset = keyboard.get_preset(preset_index)
@@ -976,13 +1001,17 @@ def main() -> None:
                 
                 preset = parse_preset_data(
                     keyboard, effect_str, args.speed, args.hue, 
-                    args.sat, args.startup_animation
+                    args.sat, args.startup_animation,
+                    args.suspend_animation
                 )
                 
                 if preset_index == 0 and preset.effect == VIALRGB_EFFECT_SKIP:
                     raise ValueError("Cannot set preset 0 to skip effect")
                 if preset_index == 7 and preset.effect == VIALRGB_EFFECT_SKIP:
                     raise ValueError("Cannot set custom effect to skip effect")
+                if preset_index == 8 and preset.effect == VIALRGB_EFFECT_SKIP:
+                    raise ValueError("Cannot set suspended preset to skip effect.")
+
                 keyboard.set_preset(preset_index, preset)
                 print(f"Preset {preset_index} set to:")
                 pretty_print_preset(preset)
@@ -1008,6 +1037,21 @@ def main() -> None:
                 return 1
 
             random_leds_main()
+
+        elif args.command == "suspend":
+            if keyboard.model == "PI500":
+                print("PI500 does not support RGB operations")
+                return 1
+
+            if args.duration is None:
+                duration = keyboard.get_suspend_duration()
+                print(f"Current duration: {seconds} (0-65535)")
+            else:
+                keyboard.set_suspend_duration(args.duration)
+                if keyboard.get_suspend_duration() == args.duration:
+                    print(f"Duration set to {args.duration} (0-65535)")
+                else:
+                    print("Failed to set suspend duration")
 
         #########################################################
         # Commands for keys
